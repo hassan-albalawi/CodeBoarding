@@ -27,6 +27,7 @@ class ContextWindow:
 
 
 def get_context_window(provider: str, model_name: str) -> ContextWindow:
+    model_name = _strip_reasoning_suffix(model_name)
     resolvers = (
         _resolve_env,
         _resolve_user_config,
@@ -41,6 +42,10 @@ def get_context_window(provider: str, model_name: str) -> ContextWindow:
             return ContextWindow(*hit)
     logger.warning(f"No context window for {provider}/{model_name}; using fallback {ModelCapabilities.FALLBACK_INPUT}")
     return ContextWindow(ModelCapabilities.FALLBACK_INPUT, ModelCapabilities.FALLBACK_OUTPUT)
+
+
+def _strip_reasoning_suffix(model_name: str) -> str:
+    return re.sub(r"\((minimal|low|medium|high|xhigh|max|none|auto|-?\d+)\)$", "", model_name, flags=re.IGNORECASE)
 
 
 def _resolve_env(provider: str, model_name: str) -> tuple[int, int] | None:
