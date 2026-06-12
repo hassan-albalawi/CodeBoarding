@@ -89,6 +89,9 @@ class TestModelsdevResolution:
         # Why: GPT-5 ships with context=400K but input=272K; we must honor the tighter cap.
         assert get_context_window("openai", "gpt-5").input_tokens == 272_000
 
+    def test_reasoning_suffix_uses_base_model_context(self, fake_catalogs):
+        assert get_context_window("openai", "gpt-5(low)").input_tokens == 272_000
+
     def test_falls_back_to_context_when_input_absent(self, fake_catalogs):
         assert get_context_window("openai", "gpt-4o").input_tokens == 128_000
 

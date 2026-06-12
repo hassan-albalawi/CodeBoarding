@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agents.llm_config import configure_models, validate_api_key_provided
+from codeboarding_cli.local_proxy import bootstrap_local_proxy
 from core import get_registries, load_plugins
 from install import ensure_tools
 from logging_config import setup_logging
@@ -40,6 +41,7 @@ def bootstrap_environment(output_dir: Path, binary_location: Path | None) -> Non
     ensure_config_template()
     user_cfg = load_user_config()
     user_cfg.apply_to_env()
+    bootstrap_local_proxy()
     configure_models(agent_model=user_cfg.llm.agent_model, parsing_model=user_cfg.llm.parsing_model)
     validate_api_key_provided()
     load_plugins(get_registries())

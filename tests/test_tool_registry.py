@@ -716,8 +716,8 @@ class TestEnsureNodeOnPath(unittest.TestCase):
         self.assertNotIn("PATH", extra_env)
 
     @patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=False)
-    def test_no_op_for_electron_runtime(self):
-        """Electron is handled via ELECTRON_RUN_AS_NODE elsewhere."""
+    @patch("tool_registry.paths.node_is_acceptable", return_value=True)
+    def test_sets_electron_run_as_node_for_electron_runtime(self, _mock_accept):
         with tempfile.TemporaryDirectory() as temp_dir:
             code_path = Path(temp_dir) / "vscode" / "code"
             code_path.parent.mkdir(parents=True)
@@ -728,6 +728,7 @@ class TestEnsureNodeOnPath(unittest.TestCase):
             ensure_node_on_path(command, extra_env)
 
             self.assertNotIn("PATH", extra_env)
+            self.assertEqual(extra_env["ELECTRON_RUN_AS_NODE"], "1")
 
     @patch.dict(os.environ, {"PATH": "C:\\Windows\\System32"}, clear=False)
     def test_recognizes_node_exe_on_windows(self):

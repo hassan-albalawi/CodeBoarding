@@ -262,6 +262,11 @@ def ensure_node_on_path(command: list[str], extra_env: dict[str, str]) -> None:
     if not first_path.is_absolute():
         return
     if first_path.name.lower() not in ("node", "node.exe"):
+        js_entrypoint = len(command) > 1 and Path(command[1]).suffix.lower() in {".js", ".mjs", ".cjs"}
+        if not js_entrypoint:
+            return
+        if node_is_acceptable(str(first_path)):
+            extra_env["ELECTRON_RUN_AS_NODE"] = "1"
         return
     node_dir = str(first_path.parent)
     if not node_dir:
