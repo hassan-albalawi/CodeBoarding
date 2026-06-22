@@ -75,6 +75,11 @@ class TestResolverPriority:
         assert cw.input_tokens == 500_000
         assert cw.output_tokens == 64_000
 
+    def test_global_context_window_env_override_wins_over_catalog(self, fake_catalogs, monkeypatch):
+        monkeypatch.setenv("CODEBOARDING_CONTEXT_WINDOW", "123456")
+        cw = get_context_window("openai", "gpt-5")
+        assert cw == ContextWindow(123_456, 64_000)
+
     def test_malformed_env_override_falls_through_to_catalog(self, fake_catalogs, monkeypatch):
         # Regression: a typo like `500k` used to raise ValueError out of get_context_window.
         monkeypatch.setenv("CB_CTX_OPENAI_GPT_5", "500k")

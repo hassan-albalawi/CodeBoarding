@@ -67,12 +67,33 @@ def _resolve_env(provider: str, model_name: str) -> tuple[int, int] | None:
 
 
 def _resolve_user_config(provider: str, model_name: str) -> tuple[int, int] | None:
-    # Why: lets users pin a window via `[llm] context_window = N` in ~/.codeboarding/config.toml
-    # when catalogs are wrong or a model is private. Global scalar — applies to every provider/model.
+    # Why: lets users pin a window via environment/config when catalogs are
+    # wrong, a model is private, or a local proxy exposes a smaller effective
+    # context window than the upstream model id.
+    env_cw = _context_window_env_override()
+    if env_cw is not None:
+        return env_cw, ModelCapabilities.FALLBACK_OUTPUT
+
+    # Global scalar — applies to every provider/model.
     cw = _user_context_window_override()
     if cw is None:
         return None
     return cw, ModelCapabilities.FALLBACK_OUTPUT
+
+
+def _context_window_env_override() -> int | None:
+    raw = os.getenv("CODEBOARDING_CONTEXT_WINDOW")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("CODEBOARDING_CONTEXT_WINDOW=%r is not an integer; ignoring", raw)
+        return None
+    if value <= 0:
+        logger.warning("CODEBOARDING_CONTEXT_WINDOW=%r must be positive; ignoring", raw)
+        return None
+    return value
 
 
 @lru_cache(maxsize=1)

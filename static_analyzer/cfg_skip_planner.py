@@ -19,6 +19,7 @@ from typing import Callable
 
 import networkx as nx
 
+from static_analyzer.constants import ENTITY_LABELS, NodeType
 from static_analyzer.graph import CallGraph, ClusterResult
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def _build_allowed_skip_list(
 
 
 def _select_high_savings_fit(
+    cfg: CallGraph,
     allowed: list[str],
     render: Callable[[set[str]], int],
     char_budget: int,
@@ -93,33 +95,52 @@ def _select_high_savings_fit(
 
     full_len = render(set())
 
-    savings: list[tuple[int, str]] = []
-    for name in allowed:
-        saved = full_len - render({name})
-        if saved > 0:
-            savings.append((saved, name))
+    savings = _estimate_node_savings(cfg, allowed)
 
     selected: set[str] = set()
     skipped_per_cluster: dict[int, int] = {cid: 0 for cid in max_skip_per_cluster}
     current_len = full_len
-    for _saved, name in sorted(savings, key=lambda item: (-item[0], item[1])):
+    render_every = 256
+    for _saved, name in savings:
         if len(selected) >= global_cap:
             break
         cid = node_to_cluster.get(name)
         if cid is not None and skipped_per_cluster[cid] >= max_skip_per_cluster.get(cid, 0):
             continue
         selected.add(name)
-        new_len = render(selected)
-        if new_len >= current_len:
-            selected.remove(name)
-            continue
         if cid is not None:
             skipped_per_cluster[cid] += 1
+        if len(selected) % render_every != 0:
+            continue
+
+        new_len = render(selected)
+        if new_len >= current_len:
+            continue
         current_len = new_len
         if current_len <= char_budget:
-            return _minimize_skip_set(selected, render, char_budget)
+            return selected
 
     return selected if selected and render(selected) <= char_budget else None
+
+
+def _estimate_node_savings(cfg: CallGraph, allowed: list[str]) -> list[tuple[int, str]]:
+    """Estimate rendered-line savings without rendering once per candidate."""
+    cfg_nx = cfg.to_networkx()
+    savings: list[tuple[int, str]] = []
+    for name in allowed:
+        node_data = cfg_nx.nodes.get(name, {})
+        node_type = node_data.get("type")
+        type_label = ENTITY_LABELS.get(node_type, "Function")
+        if node_type == NodeType.METHOD and "." in name:
+            rendered_name = "." + name.split(".")[-1]
+        else:
+            rendered_name = name
+        # Include indentation, type label, and a small edge-sample bonus. The
+        # final render still verifies the actual budget before returning.
+        edge_bonus = cfg_nx.in_degree(name) + cfg_nx.out_degree(name)
+        saved = len(rendered_name) + len(type_label) + 12 + min(edge_bonus, 20) * 24
+        savings.append((saved, name))
+    return sorted(savings, key=lambda item: (-item[0], item[1]))
 
 
 def _minimize_skip_set(
@@ -189,6 +210,7 @@ def plan_skip_set(
         return len(cfg.to_cluster_string(cluster_result=cluster_result, skip_nodes=skip))
 
     skip = _select_high_savings_fit(
+        cfg,
         allowed,
         render,
         char_budget,

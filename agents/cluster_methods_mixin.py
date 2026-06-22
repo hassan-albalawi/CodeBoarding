@@ -22,10 +22,10 @@ from constants import MIN_CLUSTERS_THRESHOLD
 from static_analyzer.analysis_result import StaticAnalysisResults
 from static_analyzer.cfg_skip_planner import ContextBudgetExceededError, plan_skip_set
 from static_analyzer.cluster_helpers import (
-    MAX_LLM_CLUSTERS,
     enforce_cross_language_budget,
     get_all_cluster_ids,
     get_files_for_cluster_ids,
+    get_max_llm_clusters,
     merge_clusters,
 )
 from static_analyzer.cluster_relations import (
@@ -444,9 +444,10 @@ class ClusterMethodsMixin:
                 sub_cluster_result = sub_cfg.cluster()
 
                 # Merge into super-clusters if too many (same limit as AbstractionAgent)
-                if len(sub_cluster_result.clusters) > MAX_LLM_CLUSTERS:
+                max_llm_clusters = get_max_llm_clusters()
+                if len(sub_cluster_result.clusters) > max_llm_clusters:
                     n_before = len(sub_cluster_result.clusters)
-                    sub_cluster_result = merge_clusters(sub_cluster_result, sub_cfg.to_networkx(), MAX_LLM_CLUSTERS)
+                    sub_cluster_result = merge_clusters(sub_cluster_result, sub_cfg.to_networkx(), max_llm_clusters)
                     logger.info(
                         f"[DetailsAgent] Subgraph for '{component.name}': "
                         f"merged {n_before} -> {len(sub_cluster_result.clusters)} super-clusters"

@@ -53,6 +53,22 @@ from static_analyzer.scanner import ProjectScanner
 logger = logging.getLogger(__name__)
 
 
+def _subcomponent_worker_count() -> int:
+    default = min(os.cpu_count() or 4, 8)
+    raw = os.getenv("CODEBOARDING_SUBCOMPONENT_WORKERS")
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("CODEBOARDING_SUBCOMPONENT_WORKERS=%r is not an integer; using %d", raw, default)
+        return default
+    if value <= 0:
+        logger.warning("CODEBOARDING_SUBCOMPONENT_WORKERS=%r must be positive; using %d", raw, default)
+        return default
+    return value
+
+
 def _component_depth(component_id: str | None) -> int:
     """Return the absolute diagram depth for a hierarchical component id."""
     if not component_id:
@@ -381,7 +397,7 @@ class DiagramGenerator:
         root_components: list[Component],
     ) -> tuple[list[Component], dict[str, AnalysisInsights]]:
         """Generate subcomponents using absolute component depth and a frontier queue."""
-        max_workers = min(os.cpu_count() or 4, 8)
+        max_workers = _subcomponent_worker_count()
 
         expanded_components: list[Component] = []
         sub_analyses: dict[str, AnalysisInsights] = {}

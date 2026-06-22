@@ -317,6 +317,25 @@ class TestCallGraph(unittest.TestCase):
         self.assertIn("Cluster", result)
         self.assertIn("Cluster Definitions", result)
 
+    @patch.dict("os.environ", {"CODEBOARDING_MAX_RENDERED_MEMBERS_PER_CLUSTER": "2"})
+    def test_to_cluster_string_limits_rendered_cluster_members(self):
+        graph = CallGraph()
+        for i, name in enumerate(("module.a", "module.b", "module.c", "module.d"), start=1):
+            graph.add_node(Node(name, NodeType.FUNCTION, "/file.py", i * 10, i * 10 + 5))
+        graph.add_edge("module.a", "module.b")
+        graph.add_edge("module.a", "module.c")
+        graph.add_edge("module.a", "module.d")
+
+        cluster_result = ClusterResult(clusters={1: {"module.a", "module.b", "module.c", "module.d"}}, strategy="test")
+
+        result = graph.to_cluster_string(cluster_result=cluster_result)
+
+        self.assertIn("4 nodes, showing 2 representative nodes", result)
+        self.assertIn("module.a", result)
+        self.assertIn("module.b", result)
+        self.assertNotIn("module.c", result)
+        self.assertNotIn("module.d", result)
+
     def test_llm_str_small_graph(self):
         # Test LLM string for small graph (within size limit)
         graph = CallGraph()

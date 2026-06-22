@@ -18,6 +18,7 @@ distance) do we fall back to **file overlap** as a proxy for relatedness.
 """
 
 import logging
+import os
 from collections import defaultdict
 
 import networkx as nx
@@ -32,6 +33,30 @@ logger = logging.getLogger(__name__)
 # more clusters than this, merge_clusters() collapses them into super-clusters
 # using community detection on the inter-cluster connectivity graph.
 MAX_LLM_CLUSTERS = 50
+MIN_CLUSTERS_PER_LANGUAGE = 2
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer; using %d", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%r must be positive; using %d", name, raw, default)
+        return default
+    return value
+
+
+def get_max_llm_clusters() -> int:
+    return _positive_int_env("CODEBOARDING_MAX_LLM_CLUSTERS", MAX_LLM_CLUSTERS)
+
+
+def get_min_clusters_per_language() -> int:
+    return _positive_int_env("CODEBOARDING_MIN_CLUSTERS_PER_LANGUAGE", MIN_CLUSTERS_PER_LANGUAGE)
 
 
 def build_cluster_results_for_languages(
@@ -69,17 +94,18 @@ def build_all_cluster_results(static_analysis: StaticAnalysisResults) -> dict[st
     """
     languages = static_analysis.get_languages()
     cluster_results = build_cluster_results_for_languages(static_analysis, languages)
+    max_llm_clusters = get_max_llm_clusters()
 
     for lang in list(cluster_results.keys()):
         cr = cluster_results[lang]
         n_clusters = len(cr.clusters)
-        if n_clusters > MAX_LLM_CLUSTERS:
+        if n_clusters > max_llm_clusters:
             cfg = static_analysis.get_cfg(Language(lang))
             logger.info(
-                f"[SuperCluster] {lang}: {n_clusters} clusters exceeds limit of {MAX_LLM_CLUSTERS}, "
+                f"[SuperCluster] {lang}: {n_clusters} clusters exceeds limit of {max_llm_clusters}, "
                 f"merging into super-clusters"
             )
-            cluster_results[lang] = merge_clusters(cr, cfg.to_networkx(), MAX_LLM_CLUSTERS)
+            cluster_results[lang] = merge_clusters(cr, cfg.to_networkx(), max_llm_clusters)
             new_count = len(cluster_results[lang].clusters)
             logger.info(f"[SuperCluster] {lang}: merged {n_clusters} -> {new_count} super-clusters")
 
@@ -88,7 +114,7 @@ def build_all_cluster_results(static_analysis: StaticAnalysisResults) -> dict[st
     # then re-index IDs so they don't overlap across languages.
     if len(cluster_results) > 1:
         cfg_graphs = {lang: static_analysis.get_cfg(Language(lang)).to_networkx() for lang in cluster_results}
-        enforce_cross_language_budget(cluster_results, cfg_graphs)
+        enforce_cross_language_budget(cluster_results, cfg_graphs, target=max_llm_clusters)
 
     _sync_cluster_cache(static_analysis, cluster_results)
     return cluster_results
@@ -106,7 +132,7 @@ def _sync_cluster_cache(static_analysis: StaticAnalysisResults, cluster_results:
 def enforce_cross_language_budget(
     cluster_results: dict[str, ClusterResult],
     cfg_graphs: dict[str, nx.DiGraph],
-    target: int = MAX_LLM_CLUSTERS,
+    target: int | None = None,
 ) -> None:
     """Enforce a combined cluster budget across languages and re-index IDs.
 
@@ -126,12 +152,16 @@ def enforce_cross_language_budget(
     if len(cluster_results) <= 1:
         return
 
+    if target is None:
+        target = get_max_llm_clusters()
+    min_per_language = get_min_clusters_per_language()
+
     total_clusters = sum(len(cr.clusters) for cr in cluster_results.values())
     if total_clusters > target:
         for lang in list(cluster_results.keys()):
             cr = cluster_results[lang]
             lang_count = len(cr.clusters)
-            lang_target = max(2, round(target * lang_count / total_clusters))
+            lang_target = max(min_per_language, round(target * lang_count / total_clusters))
             if lang_count > lang_target:
                 logger.info(f"[SuperCluster] {lang}: reducing {lang_count} -> {lang_target} (cross-language budget)")
                 cluster_results[lang] = merge_clusters(cr, cfg_graphs[lang], lang_target)
@@ -432,7 +462,7 @@ def _build_merged_cluster_result(
 def merge_clusters(
     cluster_result: ClusterResult,
     cfg_graph: nx.DiGraph,
-    target: int = MAX_LLM_CLUSTERS,
+    target: int | None = None,
 ) -> ClusterResult:
     """
     Merge clusters into super-clusters using community detection on the
@@ -455,6 +485,9 @@ def merge_clusters(
     Returns:
         New ClusterResult with merged clusters and re-indexed IDs (1..N)
     """
+    if target is None:
+        target = get_max_llm_clusters()
+
     n_original = len(cluster_result.clusters)
 
     meta_graph = _build_meta_graph(cluster_result, cfg_graph)
