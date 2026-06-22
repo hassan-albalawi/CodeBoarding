@@ -1,4 +1,5 @@
 import logging
+import os
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,6 +17,28 @@ from static_analyzer.leiden_utils import find_partition as _leiden_find_partitio
 from static_analyzer.node import Node
 
 logger = logging.getLogger(__name__)
+
+
+def _get_render_member_limit() -> int | None:
+    raw = os.getenv("CODEBOARDING_MAX_RENDERED_MEMBERS_PER_CLUSTER")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("CODEBOARDING_MAX_RENDERED_MEMBERS_PER_CLUSTER=%r is not an integer; ignoring", raw)
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
+def _select_rendered_members(members: set[str], cfg_graph_x: nx.DiGraph, limit: int) -> set[str]:
+    ranked = sorted(
+        members,
+        key=lambda name: (-(cfg_graph_x.in_degree(name) + cfg_graph_x.out_degree(name)), name),
+    )
+    return set(ranked[:limit])
 
 
 def detect_communities[T](
@@ -416,14 +439,23 @@ class CallGraph:
 
         # Carry original cluster IDs through rendering so skip-induced size shifts
         # or cluster_ids filtering can't relabel clusters.
-        communities = [(cid, cluster_result.clusters[cid] - skip) for cid in selected_ids]
+        member_limit = _get_render_member_limit()
+        render_skip = set(skip)
+        communities: list[tuple[int, set[str], int]] = []
+        for cid in selected_ids:
+            original_members = cluster_result.clusters[cid] - skip
+            rendered_members = original_members
+            if member_limit and len(original_members) > member_limit:
+                rendered_members = _select_rendered_members(original_members, cfg_graph_x, member_limit)
+                render_skip.update(original_members - rendered_members)
+            communities.append((cid, rendered_members, len(original_members)))
 
         top_nodes: set[str] = set()
-        for _, members in communities:
+        for _, members, _ in communities:
             top_nodes |= members
 
-        cluster_str = self.__cluster_str(communities, cfg_graph_x, skip)
-        non_cluster_str = self.__non_cluster_str(cfg_graph_x, top_nodes, skip)
+        cluster_str = self.__cluster_str(communities, cfg_graph_x, render_skip)
+        non_cluster_str = self.__non_cluster_str(cfg_graph_x, top_nodes, render_skip)
         return cluster_str + non_cluster_str
 
     def _get_abstract_node_name(self, node_name: str, level: str) -> str:
@@ -608,11 +640,24 @@ class CallGraph:
         return ".".join(common)
 
     @staticmethod
-    def __cluster_str(communities: list[tuple[int, set[str]]], cfg_graph_x: nx.DiGraph, skip: set[str]) -> str:
-        valid_communities = [(cid, members) for cid, members in communities if len(members) >= 2]
+    def __cluster_str(
+        communities: list[tuple[int, set[str]] | tuple[int, set[str], int]],
+        cfg_graph_x: nx.DiGraph,
+        skip: set[str],
+    ) -> str:
+        normalized: list[tuple[int, set[str], int]] = []
+        for community in communities:
+            if len(community) == 2:
+                cid, members = community
+                original_count = len(members)
+            else:
+                cid, members, original_count = community
+            if len(members) >= 2:
+                normalized.append((cid, members, original_count))
+        valid_communities = normalized
         top_communities = sorted(valid_communities, key=lambda item: len(item[1]), reverse=True)
         communities_str = f"Cluster Definitions ({len(top_communities)} clusters):\n\n"
-        for cluster_id, community in top_communities:
+        for cluster_id, community, original_count in top_communities:
             # Group nodes by file, then by class hierarchy within each file
             file_groups: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
             standalone_nodes: dict[str, list[str]] = defaultdict(list)
@@ -639,7 +684,13 @@ class CallGraph:
                     # Standalone function or unresolvable
                     standalone_nodes[file_path].append(f"{node_name} [{type_label}]")
 
-            communities_str += f"Cluster {cluster_id} ({len(community)} nodes, {len(files_in_cluster)} files):\n"
+            if original_count > len(community):
+                communities_str += (
+                    f"Cluster {cluster_id} ({original_count} nodes, showing {len(community)} "
+                    f"representative nodes, {len(files_in_cluster)} rendered files):\n"
+                )
+            else:
+                communities_str += f"Cluster {cluster_id} ({len(community)} nodes, {len(files_in_cluster)} files):\n"
 
             for file_path in sorted(files_in_cluster):
                 classes_in_file = sorted(file_groups.get(file_path, {}))
@@ -670,7 +721,7 @@ class CallGraph:
             communities_str += "\n"
 
         # Build summarized inter-cluster connections keyed by real cluster IDs
-        node_to_cluster = {node: cid for cid, members in top_communities for node in members}
+        node_to_cluster = {node: cid for cid, members, _ in top_communities for node in members}
 
         # Aggregate inter-cluster edges: (src_cluster_id, dst_cluster_id) -> count + sample edges
         inter_cluster_summary: dict[tuple[int, int], list[str]] = defaultdict(list)

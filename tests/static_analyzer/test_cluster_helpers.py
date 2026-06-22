@@ -117,6 +117,27 @@ class TestClusterHelpers(unittest.TestCase):
         py_ids = set(cluster_results["python"].clusters.keys())
         self.assertTrue(js_ids.isdisjoint(py_ids), f"Overlap detected: {js_ids & py_ids}")
 
+    @patch.dict("os.environ", {"CODEBOARDING_MAX_LLM_CLUSTERS": "4", "CODEBOARDING_MIN_CLUSTERS_PER_LANGUAGE": "1"})
+    def test_enforce_cross_language_budget_uses_env_limit(self):
+        cluster_results = {
+            "javascript": self._make_cluster_result("js", 4),
+            "python": self._make_cluster_result("py", 4),
+        }
+        cfg_graphs = {
+            "javascript": nx.DiGraph(),
+            "python": nx.DiGraph(),
+        }
+
+        with patch("static_analyzer.cluster_helpers.merge_clusters") as mock_merge:
+            mock_merge.side_effect = lambda cr, _g, target: self._make_cluster_result(
+                "js" if next(iter(cr.file_to_clusters)).startswith("/repo/js_") else "py",
+                target,
+            )
+            enforce_cross_language_budget(cluster_results, cfg_graphs)
+
+        self.assertEqual([call.args[2] for call in mock_merge.call_args_list], [2, 2])
+        self.assertEqual(sum(len(cr.clusters) for cr in cluster_results.values()), 4)
+
     def test_enforce_cross_language_budget_noop_for_single_language(self):
         """Single-language results should not be modified."""
         cr = self._make_cluster_result("py", 10)
