@@ -255,9 +255,10 @@ def _install_channel(channel: str, install_dir: Path) -> None:
 def _run_install_script(args: list[str], install_dir: Path) -> None:
     install_dir.mkdir(parents=True, exist_ok=True)
     script = _download_install_script()
+    arch_args = _dotnet_install_arch_args()
     if platform.system() == "Windows":
         powershell = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
-        ps_args = _to_powershell_install_args(args)
+        ps_args = _to_powershell_install_args([*args, *arch_args])
         cmd = [
             powershell,
             "-NoProfile",
@@ -275,6 +276,7 @@ def _run_install_script(args: list[str], install_dir: Path) -> None:
             shutil.which("bash") or "sh",
             str(script),
             *args,
+            *arch_args,
             "--install-dir",
             str(install_dir),
             "--no-path",
@@ -289,6 +291,12 @@ def _run_install_script(args: list[str], install_dir: Path) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         raise DotnetSdkError(f"dotnet-install failed (exit {result.returncode}): {detail[-1000:]}")
+
+
+def _dotnet_install_arch_args() -> list[str]:
+    if platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        return ["--architecture", "arm64"]
+    return []
 
 
 def _download_install_script() -> Path:
@@ -321,6 +329,7 @@ def _to_powershell_install_args(args: list[str]) -> list[str]:
     mapping = {
         "--jsonfile": "-JsonFile",
         "--channel": "-Channel",
+        "--architecture": "-Architecture",
     }
     for arg in args:
         converted.append(mapping.get(arg, arg))

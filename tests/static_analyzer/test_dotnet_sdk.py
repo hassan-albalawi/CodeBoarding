@@ -106,3 +106,19 @@ def test_resolve_installs_tool_sdk_when_no_dotnet_exists(tmp_path, monkeypatch):
     assert installed == [["--channel", "10.0"]]
     assert resolution.source == "private"
     assert resolution.installed is True
+
+
+def test_dotnet_install_arch_args_use_arm64_on_apple_silicon(monkeypatch):
+    monkeypatch.setattr(dotnet_sdk.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(dotnet_sdk.platform, "machine", lambda: "arm64")
+
+    assert dotnet_sdk._dotnet_install_arch_args() == ["--architecture", "arm64"]
+
+
+def test_powershell_install_args_maps_architecture_flag():
+    assert dotnet_sdk._to_powershell_install_args(["--channel", "10.0", "--architecture", "arm64"]) == [
+        "-Channel",
+        "10.0",
+        "-Architecture",
+        "arm64",
+    ]
